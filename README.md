@@ -1,3 +1,17 @@
+### Changelog — Gemini (`agy`) Prompt Formatting & Routing Overhaul
+
+#### Backend Changes (`agy.js`, `messages.js`, `chat.js`)
+* **Zero Prompt Contamination**: Removed all hardcoded wrapper tags (`<system_instructions>`, `<conversation_history>`, `<post_history_instructions>`), default `User: ` / `Assistant: ` prefixes, segment reordering, and the hardcoded `"Reply as Assistant only..."` footer so SillyTavern's prompt structure is sent verbatim.
+* **Clean `agent.md` Generation**: Removed hardcoded `# Role` and `# Rules` sections from `buildChatAgentMd()`, keeping only the isolation frontmatter and `# System_Instructions`.
+* **Markdown Heading Preservation**: Updated `escapeAgentMarkdownSection()` to shift embedded Markdown headings down by one level (`#` → `##`, `##` → `###`) so `agy`'s parser never splits or drops sections inside `agent.md`.
+* **Consistent `agent.md` vs. `stdin` Partitioning**: Removed the `< 180 KB` fast-path that folded `system` prompts into `stdin`. System prompts now always route to `agent.md` (`systemInstruction`), while `user`/`assistant` turns route to `stdin`.
+* **`<agy_cutoff>` Support**: Added `<agy_cutoff>` marker partitioning in `foldConversationForAgy()` — everything before `<agy_cutoff>` (`system`, `user`, or `assistant` role, including `user`/`assistant` turns) is routed to `agent.md`; anything after `<agy_cutoff>` is piped to `stdin`.
+
+#### Frontend & Routing Controls (`index.js`, `settings.js`, `chat.js`, `agy.js`)
+* **`<agy_cutoff>` Toggle**: Added a UI toggle (*Use `<agy_cutoff>` prompt partitioning*, enabled by default) to enable or disable marker-based routing while automatically stripping `<agy_cutoff>` tags from the prompt in both modes.
+* **Overflow Protection Toggle**: Added a UI toggle (*Stop generation on context overflow*, enabled by default) that aborts generation with a clear `400` error toast if `stdin` exceeds **180 KB** or total context exceeds **720 KB**, instead of silently spilling or dropping history turns.
+* **Custom `# System_Instructions` Fallback**: Added a UI input (*`# System_Instructions` fallback text*) to customize the fallback instruction used when no prompts are routed to `agent.md`, with empty-input validation and automatic fallback to `"Follow the user's instructions."`.
+
 # SillyTavern — Subscriptions (Claude Max · Codex · Gemini)
 
 Use the AI subscriptions you already pay for in SillyTavern — **Claude
@@ -23,7 +37,7 @@ shows up, the rest stay out of the way.
 1. Server plugin, from your SillyTavern folder (the one with `server.js`):
 
    ```bash
-   node plugins.js install https://github.com/LukaTheHero/SillyTavern-Subscriptions
+   node plugins.js install https://github.com/kalzhang/SillyTavern-Subscriptions
    cd plugins/SillyTavern-Subscriptions
    npm install
    ```
