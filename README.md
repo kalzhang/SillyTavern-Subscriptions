@@ -12,6 +12,11 @@
 * **Overflow Protection Toggle**: Added a UI toggle (*Stop generation on context overflow*, enabled by default) that aborts generation with a clear `400` error toast if `stdin` exceeds **180 KB** or total context exceeds **720 KB**, instead of silently spilling or dropping history turns.
 * **Custom `# System_Instructions` Fallback**: Added a UI input (*`# System_Instructions` fallback text*) to customize the fallback instruction used when no prompts are routed to `agent.md`, with empty-input validation and automatic fallback to `"Follow the user's instructions."`.
 
+### Forced Injected Text
+* `agy` forces the text in the `role: user` to be wrapped in a `<USER_REQUEST>` XML block.
+* `<ADDITIONAL_METADATA>` with the current time and `<USER_SETTINGS_CHANGE>` with the text :"The user changed setting `Model Selection` from None to [MODEL]. No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string" are appended at the end of the prompt.
+* This is `agy` default behavior and cannot be changed. I would recommend adding a prompt that tells the model to ignore anything inside the `<ADDITIONAL_METADATA>` and `<USER_SETTINGS_CHANGE>` XML blocks.
+
 # SillyTavern — Subscriptions (Claude Max · Codex · Gemini)
 
 Use the AI subscriptions you already pay for in SillyTavern — **Claude
