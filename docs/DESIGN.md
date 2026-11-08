@@ -188,14 +188,53 @@ plugin, so a key is only ever billed after the user opts in (Auto or API).
   `--disable-slash-commands`. agy silently falls back to its default agent for
   an unknown `--agent`, so each run writes its own log and the turn is killed
   if the log shows the fallback. Any tool step kills the process tree.
-* agy re-asks a safety-blocked prompt once, in-process, before the plugin
-  can stop it (no switch for that in 1.2.14); the runner then kills the turn
-  and returns a 422 refusal — nothing from the retry reaches the client. Use
-  the API backend when a strict wire-level no-retry matters. Persistent 429s
+* agy can retry a failed/blocked prompt internally (no switch for that in
+  1.2.14). An empty response plus an intermediate error does not establish
+  a refusal. Explicit final safety errors map to 422; the plugin adds no
+  provider retry or fallback. Use the API backend when strict wire-level
+  no-retry matters. Persistent 429s
   end the turn after ~11 s instead of waiting for the watchdog. agy also adds
   the host's local time to each turn.
 * agy never streams thoughts in stream-json mode; reasoning display only
   works on the `api` backend. Images are not supported on the agy path.
+* A terminal `result.SUCCESS` with a nonempty, unambiguous response completes
+  the request immediately. A preceding `DONE` or clean process exit is not
+  required; cleanup receives a separate 2 s grace period and cannot change the
+  completed HTTP result. Late shutdown errors are not generation failures.
+  Final errors allow a bounded 200 ms stderr drain for status mapping.
+* The agy runner buffers both text and reasoning for JSON and SSE. SSE opens with
+  the existing heartbeat, but emits its body only after terminal validation.
+  This intentionally trades immediate token display for a single coherent reply:
+  a restarted answer can replace a buffered draft before any content is sent.
+  Stop strings are applied at delivery, so they no longer stop model generation
+  early. Aborts and timeouts still cancel generation.
+* agy 1.4.1/1.4.2/1.4.10 can report an earlier CONTENT_FILTER error after a later normally
+  stopped response. On this conflict, `lib/gemini/trajectory.js` checks only the
+  exact conversation's SQLite file in read-only mode. Recovery requires the old
+  error to match, a later DONE response with STOP_PATTERN, matching event text,
+  and no later error/unfinished step, response tool calls or new global error.
+  Event text may have one extra framing LF emitted with DONE; other differences
+  are rejected, and delivery uses the persisted normal response.
+  Only the verified retry text is delivered; filtered drafts and aggregate
+  `result.response` snapshots are never used for recovery.
+* Recovery uses dynamically imported `node:sqlite` on Node 22.13+ / 24+,
+  an exact tested CLI version (1.4.1, 1.4.2 or 1.4.10), and a bounded 1.5 s read/flush wait
+  (`ST_SUBSCRIPTIONS_AGY_RETRY_CHECK_MS`, capped at 2 s). Older runtimes,
+  unknown CLI versions, missing/mismatched databases and undecodable schemas
+  preserve the error. A SUCCESS snapshot mixing attempts also requires this
+  verification; a snapshot that exactly matches the last attempt is unambiguous.
+  The same-index/no-snapshot ambiguity remains an error.
+* Waits remain bounded: first text 240 s, generation idle 120 s, response-DONE to
+  terminal result 120 s, whole turn 600 s. The corresponding env overrides are
+  `ST_SUBSCRIPTIONS_AGY_FIRST_OUTPUT_MS`, `ST_SUBSCRIPTIONS_AGY_IDLE_MS`,
+  `ST_SUBSCRIPTIONS_AGY_FINAL_RESULT_MS` and `ST_SUBSCRIPTIONS_AGY_TIMEOUT_MS`;
+  cleanup uses `ST_SUBSCRIPTIONS_AGY_CLEANUP_MS`. Stderr and repeated status-only
+  updates never reset progress timers. `DONE` or a zero exit without a terminal
+  result is not success. Failure logs include a bounded metadata-only event trace.
+  Non-refusal errors with partial text expose
+  `partial_response: {content, incomplete: true}` in JSON/SSE error payloads;
+  existing Tavern UIs may only display the error. Refusal errors do not expose
+  unverified drafts.
 
 ## HTTP layer
 

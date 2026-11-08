@@ -57,6 +57,7 @@ export const CODEX_TIERS = ['standard', 'priority', 'ultrafast'];
 export const CODEX_SUMMARIES = ['auto', 'concise', 'detailed', 'none'];
 export const CODEX_VERBOSITY = ['default', 'low', 'medium', 'high'];
 export const GEMINI_EFFORTS = ['auto', 'low', 'medium', 'high'];
+export const DEFAULT_GEMINI_FALLBACK_INSTRUCTION = "Follow the user's instructions.";
 
 // One-time panel notices (dismissible, persisted until dismissed).
 export const NOTICE_IDS = ['customKeyPlaceholder', 'fastModeCost'];
@@ -68,7 +69,13 @@ export const defaultSettings = {
     showReasoning: true,
     claude: { backend: 'subscription', effort: 'auto', thinking: 'adaptive', identityMode: false, useResume: true, fastMode: false },
     codex: { backend: 'subscription', effort: 'auto', serviceTier: 'standard', reasoningSummary: 'auto', verbosity: 'default' },
-    gemini: { backend: 'subscription', effort: 'auto' },
+    gemini: {
+        backend: 'subscription',
+        effort: 'auto',
+        useCutoff: true,
+        abortOnOverflow: true,
+        fallbackInstruction: DEFAULT_GEMINI_FALLBACK_INSTRUCTION,
+    },
     notices: [],
     settingsVersion: SETTINGS_VERSION,
 };
@@ -182,6 +189,11 @@ export function normalizeSettings(s) {
     const g = s.gemini;
     g.backend = oneOf(BACKENDS, g.backend, 'subscription');
     g.effort = oneOf(GEMINI_EFFORTS, g.effort, 'auto');
+    g.useCutoff = asBool(g.useCutoff, true);
+    g.abortOnOverflow = asBool(g.abortOnOverflow, true);
+    g.fallbackInstruction = typeof g.fallbackInstruction === 'string' && g.fallbackInstruction.trim()
+        ? g.fallbackInstruction.trim()
+        : DEFAULT_GEMINI_FALLBACK_INSTRUCTION;
 
     s.notices = Array.isArray(s.notices) ? [...new Set(s.notices.filter((n) => NOTICE_IDS.includes(n)))] : [];
     const v = Number(s.settingsVersion);
@@ -277,6 +289,9 @@ export function buildSubscriptionsBlock(s, data = {}) {
     const codexEffort = oneOf(CODEX_EFFORTS, x.effort === 'ultra' ? 'max' : x.effort, 'auto');
     const verbosity = oneOf(CODEX_VERBOSITY, x.verbosity, 'default');
     const geminiEffort = oneOf(GEMINI_EFFORTS, g.effort, 'auto');
+    const geminiFallback = typeof g.fallbackInstruction === 'string' && g.fallbackInstruction.trim()
+        ? g.fallbackInstruction.trim()
+        : DEFAULT_GEMINI_FALLBACK_INSTRUCTION;
     return {
         // ST drops streamed reasoning while "Request model reasoning" is off,
         // so don't ask the server to stream any.
@@ -299,6 +314,9 @@ export function buildSubscriptionsBlock(s, data = {}) {
         gemini: {
             backend: oneOf(BACKENDS, g.backend, 'subscription'),
             ...(geminiEffort !== 'auto' ? { effort: geminiEffort } : {}),
+            use_cutoff: g.useCutoff !== false,
+            abort_on_overflow: g.abortOnOverflow !== false,
+            fallback_instruction: geminiFallback,
         },
     };
 }
@@ -478,7 +496,7 @@ export function providerReadiness(provider, c, backend) {
     // Subscription — and Claude Auto, which always starts on the subscription
     // (the key is only overflow when the usage window is exhausted).
     if (sub.ready === true) return result('ok', 'ready', b === 'auto' && api.ready === true ? 'API key armed for overflow only.' : undefined);
-    if (sub.ready === null) return result('unknown', provider === 'gemini' ? 'sign-in unchecked' : 'login unverified',sub.message ?? 'The login cannot be checked from here (e.g. it is in the macOS Keychain) — the first chat will tell.');
+    if (sub.ready === null) return result('unknown', provider === 'gemini' ? 'sign-in unchecked' : 'login unverified', sub.message ?? 'The login cannot be checked from here (e.g. it is in the macOS Keychain) — the first chat will tell.');
     return notReady();
 }
 
@@ -1118,7 +1136,7 @@ function boot() {
             claude.append(makeCheckboxRow('Fast mode (Opus 4.8 / 5 / 5.5 only — draws Extra Usage credits)', 'stSubsClaudeFast', settings.claude.fastMode, (v) => {
                 settings.claude.fastMode = v;
                 if (!v && settings.notices.includes('fastModeCost')) {
-                    settings.notices = settings.notices.filter((x) => x !== 'fastModeCost');
+                    settings.notices = settings.notices.filter((x) => x !== id);
                     renderNotices();
                 }
                 saveSettingsDebounced();
@@ -1173,6 +1191,69 @@ function boot() {
             const [el2, es] = makeSelectRow('Reasoning effort', 'stSubsGeminiEffort', GEMINI_EFFORTS, settings.gemini.effort, (v) => { settings.gemini.effort = oneOf(GEMINI_EFFORTS, v, 'auto'); saveSettingsDebounced(); }, { auto: 'Auto (from the model name, e.g. …-high)', low: 'Low (fastest)', medium: 'Medium', high: 'High (deepest)' });
             gemini.append(el2, es);
             gemini.append(makeHelp('Antigravity encodes effort in the model id (gemini-3.8-flash-high). Setting it here overrides that suffix where the model offers the level — Gemini 3.1 Pro has High and Low only; an unavailable level is rejected with the list of real ones.'));
+
+            gemini.append(makeCheckboxRow(
+                'Use <agy_cutoff> prompt partitioning',
+                'stSubsGeminiUseCutoff',
+                settings.gemini.useCutoff !== false,
+                (v) => {
+                    settings.gemini.useCutoff = v;
+                    saveSettingsDebounced();
+                },
+            ));
+            gemini.append(makeHelp(
+                'When enabled and `<agy_cutoff>` is placed in SillyTavern\'s Prompt Manager, everything above `<agy_cutoff>` (any ' +
+                'role) plus any `system` prompts below it are placed into `agent.md` (`# System_Instructions`), while `user` and ' +
+                '`assistant` turns below `<agy_cutoff>` are piped on STDIN (capped at 180 KB). When disabled (or if `<agy_cutoff>` ' +
+                'is not present), all `system` prompts go to `agent.md` and all `user`/`assistant` turns go to STDIN (any ' +
+                '`<agy_cutoff>` tag left in your preset is automatically stripped).',
+            ));
+
+            gemini.append(makeCheckboxRow(
+                'Stop generation on context overflow (180 KB STDIN / 720 KB total)',
+                'stSubsGeminiAbortOverflow',
+                settings.gemini.abortOnOverflow !== false,
+                (v) => {
+                    settings.gemini.abortOnOverflow = v;
+                    saveSettingsDebounced();
+                },
+            ));
+            gemini.append(makeHelp(
+                'ON (default): aborts generation immediately with an error message if STDIN exceeds 180 KB (instead of spilling ' +
+                'turns into `agent.md`) or if total context exceeds 720 KB (instead of dropping older turns). OFF: automatically ' +
+                'spills excess STDIN turns into `agent.md` and drops the oldest non-system turns when over 720 KB.',
+            ));
+
+            const fallbackLabel = el('label', 'st-subs-label', '# System_Instructions fallback text');
+            fallbackLabel.htmlFor = 'stSubsGeminiFallbackInstruction';
+            const fallbackInput = document.createElement('input');
+            fallbackInput.type = 'text';
+            fallbackInput.id = 'stSubsGeminiFallbackInstruction';
+            fallbackInput.classList.add('text_pole');
+            fallbackInput.value = settings.gemini.fallbackInstruction || DEFAULT_GEMINI_FALLBACK_INSTRUCTION;
+            fallbackInput.placeholder = DEFAULT_GEMINI_FALLBACK_INSTRUCTION;
+            fallbackInput.setAttribute('aria-describedby', 'stSubsGeminiFallbackHelp');
+            const defaultFallbackHelpText =
+                'Used under `# System_Instructions` in `agent.md` only when no prompts are routed to `agent.md` (for example, ' +
+                'when all prompts are `user`/`assistant` after `<agy_cutoff>`). Do not leave empty — `agy` drops empty sections, ' +
+                `so an empty box automatically falls back to "${DEFAULT_GEMINI_FALLBACK_INSTRUCTION}".`;
+            const fallbackHelp = makeHelp(defaultFallbackHelpText);
+            fallbackHelp.id = 'stSubsGeminiFallbackHelp';
+            fallbackInput.addEventListener('input', () => {
+                const raw = fallbackInput.value.trim();
+                const isEmpty = !raw;
+                fallbackInput.classList.toggle('st-subs-invalid', isEmpty);
+                fallbackInput.setAttribute('aria-invalid', isEmpty ? 'true' : 'false');
+                if (isEmpty) {
+                    fallbackHelp.textContent = `Warning: # System_Instructions cannot be empty in agent.md — falling back to "${DEFAULT_GEMINI_FALLBACK_INSTRUCTION}".`;
+                    settings.gemini.fallbackInstruction = DEFAULT_GEMINI_FALLBACK_INSTRUCTION;
+                } else {
+                    fallbackHelp.textContent = defaultFallbackHelpText;
+                    settings.gemini.fallbackInstruction = raw;
+                }
+                saveSettingsDebounced();
+            });
+            gemini.append(fallbackLabel, fallbackInput, fallbackHelp);
         }
 
         // ── Status & quota ──

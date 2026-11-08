@@ -122,6 +122,13 @@ plugins on every boot (`enableServerPluginsAutoUpdate`), or run
 `node plugins.js update`; after an update that changes dependencies run
 `npm install` again.
 
+When using a fork with local fixes, install from that fork and keep the installed
+checkout's `origin` pointing at it. Copying patched files onto an upstream
+checkout leaves update metadata on upstream and does not preserve the fork's
+version history. This fork sets `AGY_CLI_DISABLE_AUTO_UPDATE=true` for its CLI
+children, as documented in [Antigravity CLI troubleshooting](https://antigravity.google/docs/cli-troubleshooting).
+Upgrade the CLI explicitly after checking compatibility.
+
 **2. Panel** — in SillyTavern: **Extensions → Install extension**, paste
 
 ```

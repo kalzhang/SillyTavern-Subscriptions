@@ -182,6 +182,25 @@ test('CompletionWriter fails as SSE once the stream started, else as JSON', () =
     assert.equal(b.out.json.error.type, 'invalid_request_error');
 });
 
+test('CompletionWriter preserves incomplete output in error payloads without a successful completion', () => {
+    for (const stream of [false, true]) {
+        const res = fakeRes();
+        const w = new CompletionWriter({ res, stream, model: 'm' });
+        if (stream) w.pushText('Half');
+        w.fail(Object.assign(new Error('timed out'), { partialResponse: 'Half' }), { status: 504 });
+        if (stream) {
+            const sse = res.out.chunks.join('');
+            assert.ok(sse.includes('"partial_response":{"content":"Half","incomplete":true}'));
+            assert.ok(!sse.includes('"finish_reason":"stop"'));
+            assert.ok(sse.endsWith('data: [DONE]\n\n'));
+        } else {
+            assert.equal(res.out.status, 504);
+            assert.deepEqual(res.out.json.partial_response, { content: 'Half', incomplete: true });
+            assert.equal(res.out.json.choices, undefined);
+        }
+    }
+});
+
 test('CompletionWriter strips an echoed prefill but keeps genuine continuations', () => {
     const mk = () => { const res = fakeRes(); const w = new CompletionWriter({ res, stream: true, model: 'm' }); w.setPrefill('Marta: Good memory. Next comes the'); return [res, w]; };
     // echo split across chunks → stripped
