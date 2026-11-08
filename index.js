@@ -72,6 +72,7 @@ export const defaultSettings = {
     gemini: {
         backend: 'subscription',
         effort: 'auto',
+        stream: true,
         useCutoff: true,
         abortOnOverflow: true,
         fallbackInstruction: DEFAULT_GEMINI_FALLBACK_INSTRUCTION,
@@ -189,6 +190,7 @@ export function normalizeSettings(s) {
     const g = s.gemini;
     g.backend = oneOf(BACKENDS, g.backend, 'subscription');
     g.effort = oneOf(GEMINI_EFFORTS, g.effort, 'auto');
+    g.stream = asBool(g.stream, true);
     g.useCutoff = asBool(g.useCutoff, true);
     g.abortOnOverflow = asBool(g.abortOnOverflow, true);
     g.fallbackInstruction = typeof g.fallbackInstruction === 'string' && g.fallbackInstruction.trim()
@@ -314,6 +316,7 @@ export function buildSubscriptionsBlock(s, data = {}) {
         gemini: {
             backend: oneOf(BACKENDS, g.backend, 'subscription'),
             ...(geminiEffort !== 'auto' ? { effort: geminiEffort } : {}),
+            stream: g.stream !== false,
             use_cutoff: g.useCutoff !== false,
             abort_on_overflow: g.abortOnOverflow !== false,
             fallback_instruction: geminiFallback,
@@ -1136,7 +1139,7 @@ function boot() {
             claude.append(makeCheckboxRow('Fast mode (Opus 4.8 / 5 / 5.5 only — draws Extra Usage credits)', 'stSubsClaudeFast', settings.claude.fastMode, (v) => {
                 settings.claude.fastMode = v;
                 if (!v && settings.notices.includes('fastModeCost')) {
-                    settings.notices = settings.notices.filter((x) => x !== id);
+                    settings.notices = settings.notices.filter((x) => x !== 'fastModeCost');
                     renderNotices();
                 }
                 saveSettingsDebounced();
@@ -1191,6 +1194,21 @@ function boot() {
             const [el2, es] = makeSelectRow('Reasoning effort', 'stSubsGeminiEffort', GEMINI_EFFORTS, settings.gemini.effort, (v) => { settings.gemini.effort = oneOf(GEMINI_EFFORTS, v, 'auto'); saveSettingsDebounced(); }, { auto: 'Auto (from the model name, e.g. …-high)', low: 'Low (fastest)', medium: 'Medium', high: 'High (deepest)' });
             gemini.append(el2, es);
             gemini.append(makeHelp('Antigravity encodes effort in the model id (gemini-3.8-flash-high). Setting it here overrides that suffix where the model offers the level — Gemini 3.1 Pro has High and Low only; an unavailable level is rejected with the list of real ones.'));
+
+            gemini.append(makeCheckboxRow(
+                'Stream responses (live token streaming via agy)',
+                'stSubsGeminiStream',
+                settings.gemini.stream !== false,
+                (v) => {
+                    settings.gemini.stream = v;
+                    saveSettingsDebounced();
+                },
+            ));
+            gemini.append(makeHelp(
+                'ON (default): streams text deltas to SillyTavern in real time as agy generates them (SillyTavern\'s own ' +
+                '"Streaming" toggle must also be enabled) and stops agy immediately when a stop string matches. OFF: buffers ' +
+                'the reply until agy finishes so the plugin can verify and recover cleanly if agy retries mid-stream.',
+            ));
 
             gemini.append(makeCheckboxRow(
                 'Use <agy_cutoff> prompt partitioning',
